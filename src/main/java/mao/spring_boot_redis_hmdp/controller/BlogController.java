@@ -93,5 +93,18 @@ public class BlogController
         return Result.ok(records);
     }
 
+    /**
+     * 从收件箱里取关注的人发的信息
+     *
+     * @param max    时间戳，第一页为当前时间，第n页为第n-1页最后一条数据的时间戳
+     * @param offset 偏移量，第一页为0，不是第一页，取决于上一页最后一个时间戳的条数
+     * @return Result
+     */
+    @GetMapping("/of/follow")
+    public Result queryBlogOfFollow(@RequestParam("lastId") Long max,
+                                    @RequestParam(value = "offset", defaultValue = "0") Integer offset)
+    {
+        return blogService.queryBlogOfFollow(max, offset);
+    }
 
 }

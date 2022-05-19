@@ -8,6 +8,7 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import mao.spring_boot_redis_hmdp.dto.Result;
+import mao.spring_boot_redis_hmdp.dto.ScrollResult;
 import mao.spring_boot_redis_hmdp.dto.UserDTO;
 import mao.spring_boot_redis_hmdp.entity.Blog;
 import mao.spring_boot_redis_hmdp.entity.Follow;
@@ -21,12 +22,11 @@ import mao.spring_boot_redis_hmdp.utils.RedisUtils;
 import mao.spring_boot_redis_hmdp.utils.SystemConstants;
 import mao.spring_boot_redis_hmdp.utils.UserHolder;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
-import java.util.Collections;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -203,5 +203,60 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         }
         //返回
         return Result.ok(blog.getId());
+    }
+
+    @Override
+    public Result queryBlogOfFollow(Long max, Integer offset)
+    {
+        //获得当前登录用户
+        UserDTO user = UserHolder.getUser();
+        //key
+        String redisKey = RedisConstants.FEED_KEY + user.getId();
+        //从redis收件箱里取数据
+        //参数2：最小分数 参数3：最大分数 参数4：偏移量 参数5：每次取几条
+        Set<ZSetOperations.TypedTuple<String>> typedTuples = stringRedisTemplate.opsForZSet().
+                reverseRangeByScoreWithScores(redisKey, 0, max, offset, 3);
+        //TypedTuple里有V getValue();  和Double getScore(); 方法
+        //判断是否为空
+        if (typedTuples == null)
+        {
+            //返回空集合
+            return Result.ok(Collections.emptyList());
+        }
+        //不为空
+        //最后一个时间戳重复的数量
+        int count = 1;
+        //最小时间戳
+        long minTime = 0;
+        List<Long> ids = new ArrayList<>(typedTuples.size());
+        //遍历
+        for (ZSetOperations.TypedTuple<String> typedTuple : typedTuples)
+        {
+            //加入到list集合里
+            ids.add(Long.valueOf(Objects.requireNonNull(typedTuple.getValue())));
+            //获得时间戳
+            long time = Objects.requireNonNull(typedTuple.getScore()).longValue();
+            if (time == minTime)
+            {
+                //时间是最小时间，计数器+1
+                count++;
+            }
+            else
+            {
+                //不是最小时间，刷新最小时间，计数器清成1（包含自己）
+                minTime = time;
+                count = 1;
+            }
+        }
+        String join = StrUtil.join(",", ids);
+        //查数据库
+        List<Blog> blogs = this.query().in("id", ids).last("order by field (id," + join + ")").list();
+        //封装结果
+        ScrollResult scrollResult = new ScrollResult();
+        scrollResult.setList(blogs);
+        scrollResult.setMinTime(minTime);
+        scrollResult.setOffset(count);
+        //返回
+        return Result.ok(scrollResult);
     }
 }
